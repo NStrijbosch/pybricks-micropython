@@ -80,8 +80,8 @@ STATIC void handle_notification(pbdrv_bluetooth_connection_t connection, const u
 STATIC void remote_connect(const char *name, mp_int_t timeout) {
     pb_remote_t *remote = &pb_remote_singleton;
 
-    // REVISIT: for now, we only allow a single connection to a remote.
-    if (pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_HANDSET)) {
+    // REVISIT: for now, we only allow a single connection to a LWP3 device.
+    if (pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_LWP3)) {
         pb_assert(PBIO_ERROR_BUSY);
     }
 
@@ -92,6 +92,8 @@ STATIC void remote_connect(const char *name, mp_int_t timeout) {
     if (name) {
         strncpy(remote->context.name, name, sizeof(remote->context.name));
     }
+
+    remote->context.hub_kind = LWP3_HUB_KIND_HANDSET;
 
     pbdrv_bluetooth_set_notification_handler(handle_notification);
     pbdrv_bluetooth_scan_and_connect(&remote->task, &remote->context);
@@ -142,7 +144,7 @@ void pb_type_Remote_cleanup(void) {
 }
 
 STATIC void remote_assert_connected(void) {
-    if (!pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_HANDSET)) {
+    if (!pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_LWP3)) {
         mp_raise_OSError(MP_ENODEV);
     }
 }

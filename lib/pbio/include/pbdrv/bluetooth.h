@@ -16,6 +16,8 @@
 #include <pbio/error.h>
 #include <pbio/task.h>
 
+#include <lego_lwp3.h>
+
 /**
  * BLE characteristic connection identifiers.
  */
@@ -27,7 +29,7 @@ typedef enum {
     /** The Nordic UART service. */
     PBDRV_BLUETOOTH_CONNECTION_UART,
     /** A LEGO Powered Up Handset peripheral connection. */
-    PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_HANDSET,
+    PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_LWP3,
 } pbdrv_bluetooth_connection_t;
 
 /** Data structure that holds context needed for sending BLE notifications. */
@@ -151,6 +153,7 @@ typedef struct {
     uint8_t status;
     uint8_t bdaddr[6];
     char name[20];
+    lwp3_hub_kind_t hub_kind;
 } pbdrv_bluetooth_scan_and_connect_context_t;
 
 /**
