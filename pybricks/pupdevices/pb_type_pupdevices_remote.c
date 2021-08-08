@@ -89,11 +89,11 @@ STATIC void remote_connect(const char *name, mp_int_t timeout) {
     // we are using static memory
     memset(remote, 0, sizeof(*remote));
 
+    remote->context.hub_kind = LWP3_HUB_KIND_HANDSET;
+
     if (name) {
         strncpy(remote->context.name, name, sizeof(remote->context.name));
     }
-
-    remote->context.hub_kind = LWP3_HUB_KIND_HANDSET;
 
     pbdrv_bluetooth_set_notification_handler(handle_notification);
     pbdrv_bluetooth_scan_and_connect(&remote->task, &remote->context);
