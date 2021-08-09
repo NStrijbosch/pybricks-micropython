@@ -320,10 +320,10 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     handset.con_state = CON_STATE_WAIT_SCAN_RSP;
                 }
             } else if (handset.con_state == CON_STATE_WAIT_SCAN_RSP) {
-                // REVISIT: for now it is assumed that the saved Bluetooth address compare 
+                // REVISIT: for now it is assumed that the saved Bluetooth address compare
                 //          is a sufficient check to check that scan response is from LWP3 device
                 // PREVIOUSLY: extra check: data_length == 30 for HANDSET
-                //                          data_length == 27 for MARIO 
+                //                          data_length == 27 for MARIO
                 //                          data_lenght == 20 for SYSTEM_2IO ... etc
                 if (event_type == SCAN_RSP && bd_addr_cmp(address, handset.address) == 0) {
                     if (data[1] == BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME) {
