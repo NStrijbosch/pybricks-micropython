@@ -204,6 +204,7 @@ PYBRICKS_PYBRICKS_SRC_C = $(addprefix pybricks/,\
 	common/pb_type_speaker.c \
 	common/pb_type_system.c \
 	experimental/pb_module_experimental.c \
+	experimental/pb_type_experimental_lwp3device.c \
 	geometry/pb_module_geometry.c \
 	geometry/pb_type_matrix.c \
 	hubs/pb_module_hubs.c \

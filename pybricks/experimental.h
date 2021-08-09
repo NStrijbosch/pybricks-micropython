@@ -10,7 +10,11 @@
 
 #include "py/obj.h"
 
+#include <pybricks/util_pb/pb_device.h>
+
 extern const mp_obj_module_t pb_module_experimental;
+
+extern const mp_obj_type_t pb_type_experimental_LWP3Device;
 
 #endif // PYBRICKS_PY_EXPERIMENTAL
 

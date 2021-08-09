@@ -97,7 +97,8 @@ STATIC const mp_rom_map_elem_t experimental_globals_table[] = {
     #else
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_experimental) },
     #endif // PYBRICKS_HUB_EV3BRICK
-    { MP_ROM_QSTR(MP_QSTR_hello_world), MP_ROM_PTR(&experimental_hello_world_obj) },
+    { MP_ROM_QSTR(MP_QSTR_hello_world), MP_ROM_PTR(&experimental_hello_world_obj)     },
+    { MP_ROM_QSTR(MP_QSTR_LWP3Device),  MP_ROM_PTR(&pb_type_experimental_LWP3Device)  },
 };
 STATIC MP_DEFINE_CONST_DICT(pb_module_experimental_globals, experimental_globals_table);
 
