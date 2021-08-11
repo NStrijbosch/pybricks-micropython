@@ -88,6 +88,15 @@ extern const pb_obj_enum_member_t pb_Side_LEFT_obj;
 extern const pb_obj_enum_member_t pb_Side_RIGHT_obj;
 extern const pb_obj_enum_member_t pb_Side_TOP_obj;
 
+extern const mp_obj_type_t pb_enum_type_LWP3;
+
+extern const pb_obj_enum_member_t pb_LWP3_DUPLO_TRAIN_obj;
+extern const pb_obj_enum_member_t pb_LWP3_MOVE_HUB_obj;
+extern const pb_obj_enum_member_t pb_LWP3_CITY_HUB_obj;
+extern const pb_obj_enum_member_t pb_LWP3_REMOTE_obj;
+extern const pb_obj_enum_member_t pb_LWP3_MARIO_obj;
+extern const pb_obj_enum_member_t pb_LWP3_TECHNIC_HUB_obj;
+
 extern const mp_obj_module_t pb_module_parameters;
 
 #endif // PYBRICKS_PY_PARAMETERS

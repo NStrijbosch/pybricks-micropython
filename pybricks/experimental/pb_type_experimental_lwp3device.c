@@ -27,57 +27,19 @@
 #include "py/obj.h"
 #include "py/mperrno.h"
 
-enum {
-    REMOTE_PORT_LEFT_BUTTONS    = 0,
-    REMOTE_PORT_RIGHT_BUTTONS   = 1,
-    REMOTE_PORT_STATUS_LIGHT    = 52,
-    // NB: items below included for completeness - don't seem to work
-    // use hub properties instead
-    REMOTE_PORT_BATTERY_VOLTAGE = 59,
-    REMOTE_PORT_RSSI            = 60,
-};
-
-enum {
-    REMOTE_BUTTONS_MODE_RCKEY   = 0,
-    REMOTE_BUTTONS_MODE_KEYA    = 1,
-    REMOTE_BUTTONS_MODE_KEYR    = 2,
-    REMOTE_BUTTONS_MODE_KEYD    = 3,
-    REMOTE_BUTTONS_MODE_KEYSD   = 4,
-};
-
-enum {
-    STATUS_LIGHT_MODE_COL_0     = 0,
-    STATUS_LIGHT_MODE_RGB_0     = 1,
-};
-
 typedef struct {
     pbio_task_t task;
-    uint8_t left[3];
-    uint8_t right[3];
-    uint8_t center;
     pbdrv_bluetooth_scan_and_connect_context_t context;
 } pb_lwp3device_t;
 
 STATIC pb_lwp3device_t pb_lwp3device_singleton;
 
-// Handles LEGO Wireless protocol messages from the handset
+// Handles LEGO Wireless protocol messages from the LWP3 Device
 STATIC void handle_notification(pbdrv_bluetooth_connection_t connection, const uint8_t *value, uint8_t size) {
-    pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
-
-    if (value[0] == 5 && value[2] == LWP3_MSG_TYPE_HW_NET_CMDS && value[3] == LWP3_HW_NET_CMD_CONNECTION_REQ) {
-        // This message is meant for something else, but contains the center button state
-        lwp3device->center = value[4];
-    } else if (value[0] == 7 && value[2] == LWP3_MSG_TYPE_PORT_VALUE) {
-        // This assumes that the handset button ports have already been set to mode KEYSD
-        if (value[3] == REMOTE_PORT_LEFT_BUTTONS) {
-            memcpy(lwp3device->left, &value[4], 3);
-        } else if (value[3] == REMOTE_PORT_RIGHT_BUTTONS) {
-            memcpy(lwp3device->right, &value[4], 3);
-        }
-    }
+    // TODO: include notification handler: store all incoming messages in finite lenght buffer
 }
 
-STATIC void lwp3device_connect(const char *name, mp_int_t timeout) {
+STATIC void lwp3device_connect(const lwp3_hub_kind_t hub_kind, const char *name, mp_int_t timeout) {
     pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
 
     // REVISIT: for now, we only allow a single connection to a LWP3 device.
@@ -89,7 +51,7 @@ STATIC void lwp3device_connect(const char *name, mp_int_t timeout) {
     // we are using static memory
     memset(lwp3device, 0, sizeof(*lwp3device));
 
-    lwp3device->context.hub_kind = LWP3_HUB_KIND_HANDSET;
+    lwp3device->context.hub_kind = hub_kind;
 
     if (name) {
         strncpy(lwp3device->context.name, name, sizeof(lwp3device->context.name));
@@ -98,49 +60,10 @@ STATIC void lwp3device_connect(const char *name, mp_int_t timeout) {
     pbdrv_bluetooth_set_notification_handler(handle_notification);
     pbdrv_bluetooth_scan_and_connect(&lwp3device->task, &lwp3device->context);
     pb_wait_task(&lwp3device->task, timeout);
-
-    struct {
-        pbdrv_bluetooth_value_t value;
-        uint8_t length;
-        uint8_t hub;
-        uint8_t type;
-        uint8_t port;
-        uint8_t mode;
-        uint32_t delta_interval;
-        uint8_t enable_notifications;
-    } __attribute__((packed)) msg = {
-        .value.size = 10,
-        .length = 10,
-        .hub = 0,
-        .type = LWP3_MSG_TYPE_PORT_MODE_SETUP,
-        .port = REMOTE_PORT_LEFT_BUTTONS,
-        .mode = REMOTE_BUTTONS_MODE_KEYSD,
-        .delta_interval = 1,
-        .enable_notifications = 1,
-    };
-
-    // set mode for left buttons
-
-    pbdrv_bluetooth_write_remote(&lwp3device->task, &msg.value);
-    pb_wait_task(&lwp3device->task, -1);
-
-    // set mode for right buttons
-
-    msg.port = REMOTE_PORT_RIGHT_BUTTONS;
-    pbdrv_bluetooth_write_remote(&lwp3device->task, &msg.value);
-    pb_wait_task(&lwp3device->task, -1);
-
-    // set status light to RGB mode
-
-    msg.port = REMOTE_PORT_STATUS_LIGHT;
-    msg.mode = STATUS_LIGHT_MODE_RGB_0;
-    msg.enable_notifications = 0;
-    pbdrv_bluetooth_write_remote(&lwp3device->task, &msg.value);
-    pb_wait_task(&lwp3device->task, -1);
 }
 
 void pb_type_LWP3Device_cleanup(void) {
-    pbdrv_bluetooth_lwp3devicect_remote();
+    pbdrv_bluetooth_disconnect_remote();
 }
 
 STATIC void lwp3device_assert_connected(void) {
@@ -149,100 +72,25 @@ STATIC void lwp3device_assert_connected(void) {
     }
 }
 
-STATIC pbio_error_t lwp3device_button_is_pressed(pbio_button_flags_t *pressed) {
-    pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
-
-    lwp3device_assert_connected();
-
-    *pressed = 0;
-
-    if (lwp3device->left[0]) {
-        *pressed |= PBIO_BUTTON_LEFT_UP;
-    }
-    if (lwp3device->left[1]) {
-        *pressed |= PBIO_BUTTON_LEFT;
-    }
-    if (lwp3device->left[2]) {
-        *pressed |= PBIO_BUTTON_LEFT_DOWN;
-    }
-    if (lwp3device->right[0]) {
-        *pressed |= PBIO_BUTTON_RIGHT_UP;
-    }
-    if (lwp3device->right[1]) {
-        *pressed |= PBIO_BUTTON_RIGHT;
-    }
-    if (lwp3device->right[2]) {
-        *pressed |= PBIO_BUTTON_RIGHT_DOWN;
-    }
-    if (lwp3device->center) {
-        *pressed |= PBIO_BUTTON_CENTER;
-    }
-    return PBIO_SUCCESS;
-}
-
-STATIC void pb_type_experimental_LWP3Device_light_on(void *context, const pbio_color_hsv_t *hsv) {
-    pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
-
-    lwp3device_assert_connected();
-
-    struct {
-        pbdrv_bluetooth_value_t value;
-        uint8_t length;
-        uint8_t hub;
-        uint8_t type;
-        uint8_t port;
-        uint8_t startup : 4;
-        uint8_t completion : 4;
-        uint8_t cmd;
-        uint8_t mode;
-        uint8_t payload[3];
-    } __attribute__((packed)) msg = {
-        .value.size = 10,
-        .length = 10,
-        .type = LWP3_MSG_TYPE_OUT_PORT_CMD,
-        .port = REMOTE_PORT_STATUS_LIGHT,
-        .startup = LWP3_STARTUP_BUFFER,
-        .completion = LWP3_COMPLETION_NO_ACTION,
-        .cmd = LWP3_OUTPUT_CMD_WRITE_DIRECT_MODE_DATA,
-        .mode = STATUS_LIGHT_MODE_RGB_0,
-    };
-
-    pbio_color_hsv_to_rgb(hsv, (pbio_color_rgb_t *)msg.payload);
-
-    pbdrv_bluetooth_write_remote(&lwp3device->task, &msg.value);
-    pb_wait_task(&lwp3device->task, -1);
-}
-
 typedef struct _pb_type_experimental_LWP3Device_obj_t {
     mp_obj_base_t base;
-    mp_obj_t buttons;
-    mp_obj_t light;
 } pb_type_experimental_LWP3Device_obj_t;
-
-STATIC const pb_obj_enum_member_t *lwp3device_buttons[] = {
-    &pb_Button_LEFT_MINUS_obj,
-    &pb_Button_RIGHT_MINUS_obj,
-    &pb_Button_LEFT_obj,
-    &pb_Button_CENTER_obj,
-    &pb_Button_RIGHT_obj,
-    &pb_Button_LEFT_PLUS_obj,
-    &pb_Button_RIGHT_PLUS_obj
-};
 
 STATIC mp_obj_t pb_type_experimental_LWP3Device_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
     PB_PARSE_ARGS_CLASS(n_args, n_kw, args,
+        PB_ARG_REQUIRED(hub_kind),
         PB_ARG_DEFAULT_NONE(name),
         PB_ARG_DEFAULT_INT(timeout, 10000));
 
     pb_type_experimental_LWP3Device_obj_t *self = m_new_obj(pb_type_experimental_LWP3Device_obj_t);
     self->base.type = (mp_obj_type_t *)type;
 
+    pbio_port_id_t hub_kind = pb_type_enum_get_value(hub_kind_in, &pb_enum_type_LWP3);
+
     const char *name = name_in == mp_const_none ? NULL : mp_obj_str_get_str(name_in);
     mp_int_t timeout = timeout_in == mp_const_none ? -1 : pb_obj_get_positive_int(timeout_in);
-    lwp3device_connect(name, timeout);
+    lwp3device_connect(hub_kind, name, timeout);
 
-    self->buttons = pb_type_Keypad_obj_new(MP_ARRAY_SIZE(lwp3device_buttons), lwp3device_buttons, lwp3device_button_is_pressed);
-    self->light = pb_type_ColorLight_external_obj_new(NULL, pb_type_experimental_LWP3Device_light_on);
     return MP_OBJ_FROM_PTR(self);
 }
 
@@ -292,8 +140,6 @@ STATIC mp_obj_t lwp3device_name(size_t n_args, const mp_obj_t *args) {
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lwp3device_name_obj, 1, 2, lwp3device_name);
 
 STATIC const mp_rom_map_elem_t pb_type_experimental_LWP3Device_locals_dict_table[] = {
-    { MP_ROM_QSTR(MP_QSTR_buttons), MP_ROM_ATTRIBUTE_OFFSET(pb_type_experimental_LWP3Device_obj_t, buttons) },
-    { MP_ROM_QSTR(MP_QSTR_light), MP_ROM_ATTRIBUTE_OFFSET(pb_type_experimental_LWP3Device_obj_t, light) },
     { MP_ROM_QSTR(MP_QSTR_name), MP_ROM_PTR(&lwp3device_name_obj) },
 };
 STATIC MP_DEFINE_CONST_DICT(pb_type_experimental_LWP3Device_locals_dict, pb_type_experimental_LWP3Device_locals_dict_table);

@@ -19,6 +19,7 @@ STATIC const mp_rom_map_elem_t parameters_globals_table[] = {
     #endif
     { MP_ROM_QSTR(MP_QSTR_Port),        MP_ROM_PTR(&pb_enum_type_Port)      },
     { MP_ROM_QSTR(MP_QSTR_Side),        MP_ROM_PTR(&pb_enum_type_Side)      },
+    { MP_ROM_QSTR(MP_QSTR_LWP3),        MP_ROM_PTR(&pb_enum_type_LWP3)      },
     { MP_ROM_QSTR(MP_QSTR_Stop),        MP_ROM_PTR(&pb_enum_type_Stop)      },
 };
 STATIC MP_DEFINE_CONST_DICT(pb_module_parameters_globals, parameters_globals_table);
