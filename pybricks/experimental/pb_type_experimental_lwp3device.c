@@ -74,6 +74,7 @@ STATIC void lwp3device_assert_connected(void) {
 
 typedef struct _pb_type_experimental_LWP3Device_obj_t {
     mp_obj_base_t base;
+    mp_obj_t write;
 } pb_type_experimental_LWP3Device_obj_t;
 
 STATIC mp_obj_t pb_type_experimental_LWP3Device_make_new(const mp_obj_type_t *type, size_t n_args, size_t n_kw, const mp_obj_t *args) {
@@ -139,8 +140,40 @@ STATIC mp_obj_t lwp3device_name(size_t n_args, const mp_obj_t *args) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lwp3device_name_obj, 1, 2, lwp3device_name);
 
+STATIC mp_obj_t lwp3device_write(size_t n_args, const mp_obj_t *args)  {
+    pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
+
+    lwp3device_assert_connected();
+
+    if (n_args == 2) {
+        size_t len;
+        const char *payload = mp_obj_str_get_data(args[1], &len);
+
+        if (len == 0 || len > LWP3_MAX_MESSAGE_SIZE) {
+            mp_raise_ValueError(MP_ERROR_TEXT("bad name length"));
+        }
+
+        struct {
+            pbdrv_bluetooth_value_t value;
+            char payload[LWP3_MAX_MESSAGE_SIZE];
+        } __attribute__((packed)) msg = {
+            .value.size = len,
+        };
+        memcpy(msg.payload, payload, len);
+
+        pbdrv_bluetooth_write_remote(&lwp3device->task, &msg.value);
+        pb_wait_task(&lwp3device->task, -1);
+
+        return mp_const_none;
+    } else{
+        return mp_const_none;
+    }
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lwp3device_write_obj, 1, 2, lwp3device_write);
+
 STATIC const mp_rom_map_elem_t pb_type_experimental_LWP3Device_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_name), MP_ROM_PTR(&lwp3device_name_obj) },
+    { MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&lwp3device_write_obj) },
 };
 STATIC MP_DEFINE_CONST_DICT(pb_type_experimental_LWP3Device_locals_dict, pb_type_experimental_LWP3Device_locals_dict_table);
 

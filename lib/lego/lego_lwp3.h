@@ -82,6 +82,10 @@ typedef enum {
 
 /** max size for ::LWP3_HUB_PROPERTY_NAME payload */
 #define LWP3_MAX_HUB_PROPERTY_NAME_SIZE 14
+
+/** max size for ::LWP3_MESSAGE */
+#define LWP3_MAX_MESSAGE_SIZE 19
+
 typedef enum {
     LWP3_HUB_PROPERTY_OP_SET                = 0x01,
     LWP3_HUB_PROPERTY_OP_ENABLE             = 0x02,
