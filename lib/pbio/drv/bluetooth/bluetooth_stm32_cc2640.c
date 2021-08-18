@@ -143,6 +143,54 @@ static pbdrv_bluetooth_receive_handler_t notification_handler;
 static const pbdrv_bluetooth_stm32_cc2640_platform_data_t *pdata = &pbdrv_bluetooth_stm32_cc2640_platform_data;
 
 /**
+ * Converts a ble error code to the most appropriate pbio error code.
+ * @param [in]  status      The ble error code.
+ * @return                  The pbio error code.
+ */
+static pbio_error_t ble_error_to_pbio_error(HCI_StatusCodes_t status) {
+    switch (status) {
+        case bleSUCCESS:
+            return PBIO_SUCCESS;
+        case bleInvalidParameter:
+            return PBIO_ERROR_INVALID_ARG;
+        case bleNotConnected:
+            return PBIO_ERROR_NO_DEV;
+        case bleTimeout:
+            return PBIO_ERROR_TIMEDOUT;
+        default:
+            return PBIO_ERROR_FAILED;
+    }
+}
+
+/**
+ * Gets a vendor-specific event payload for @p handle.
+ * @param [in]  handle      The connection handle.
+ * @param [out] event       The vendor-specific event.
+ * @param [out] status      The event status.
+ * @return                  The event payload or NULL if there is no pending
+ *                          vendor-specific event or the event is for a different
+ *                          connection handle.
+ */
+static uint8_t *get_vendor_event(uint16_t handle, uint16_t *event, HCI_StatusCodes_t *status) {
+    if (read_buf[NPI_SPI_HEADER_LEN] != HCI_EVENT_PACKET) {
+        return NULL;
+    }
+
+    if (read_buf[NPI_SPI_HEADER_LEN + 1] != HCI_EVENT_VENDOR_SPECIFIC) {
+        return NULL;
+    }
+
+    *event = pbio_get_uint16_le(&read_buf[NPI_SPI_HEADER_LEN + 3]);
+    *status = read_buf[NPI_SPI_HEADER_LEN + 5];
+
+    if (pbio_get_uint16_le(&read_buf[NPI_SPI_HEADER_LEN + 6]) != handle) {
+        return NULL;
+    }
+
+    return &read_buf[NPI_SPI_HEADER_LEN + 9];
+}
+
+/**
  * Sets the nRESET line on the Bluetooth chip.
  */
 static void bluetooth_reset(reset_state_t reset) {
@@ -494,34 +542,71 @@ try_again:
 
     context->status = read_buf[8]; // debug
 
-    // HACK: Chararacteristics of LEGO Mario are not properly found by GATT_DiscCharsByUUID().
+    // GATT_DiscCharsByUUID() sends a "read by type request" so we have to
+    // wait until we get an error response to the request or we get a "read
+    // by type response" with status of bleProcedureComplete. There can be
+    // multiple responses received before the procedure is complete.
+    // REVISIT: what happens when remote is disconnected while waiting here?
+
+    PT_WAIT_UNTIL(pt, {
+        uint8_t *payload;
+        uint16_t event;
+        HCI_StatusCodes_t status;
+        (payload = get_vendor_event(remote_handle, &event, &status)) && ({
+            if (event == ATT_EVENT_ERROR_RSP && payload[0] == ATT_READ_BY_TYPE_REQ) {
+                task->status = PBIO_ERROR_FAILED;
+                goto disconnect;
+            }
+
+            event == ATT_EVENT_READ_BY_TYPE_RSP;
+        }) && ({
+            // hopefully the docs are correct and this is the only possible error
+            if (status == bleTimeout) {
+                task->status = PBIO_ERROR_TIMEDOUT;
+                goto disconnect;
+            }
+
+            // this assumes that there is only one matching characteristic
+            // (if there is more than one, we will end up with the last)
+            // it also assumes that it is the only characteristic in the response
+            if (status == bleSUCCESS) {
+                remote_lwp3_char_handle = pbio_get_uint16_le(&payload[4]);
+            }
+
+            status == bleProcedureComplete;
+        });
+    });
+
+    // HACK: Characteristics of LEGO Mario are not properly found by GATT_DiscCharsByUUID().
     // remote_lwp3_char_handle for mario is hard coded for now
     if (context->hub_kind == LWP3_HUB_KIND_MARIO) {
-        remote_lwp3_char_handle = 0x0011;
-    } else {
-        // Assuming that we only ever get successful ATT_ReadByTypeRsp and failed
-        // ATT_ReadByTypeRsp or ATT_ErrorRsp.
-        PT_WAIT_UNTIL(pt, {
-            if (task->cancel) {
-                goto cancel_disconnect;
-            }
-            remote_lwp3_char_handle != NO_CONNECTION;
-        });
+        remote_lwp3_char_handle = 0x0012;
     }
 
     // enable notifications
 
+retry:
     PT_WAIT_WHILE(pt, write_xfer_size);
     {
         static const uint16_t enable = 0x0001;
         attWriteReq_t req = {
-            .handle = remote_lwp3_char_handle + 2,
+            // assuming that client characteristic configuration descriptor
+            // is next attribute after the characteristic value attribute
+            .handle = remote_lwp3_char_handle + 1,
             .len = sizeof(enable),
             .pValue = (uint8_t *)&enable,
         };
+        // REVISIT: we may want to change this to write with response to ensure
+        // that the remote device received the message.
         GATT_WriteNoRsp(remote_handle, &req);
     }
     PT_WAIT_UNTIL(pt, hci_command_status);
+
+    HCI_StatusCodes_t status = read_buf[8];
+
+    if (status == blePending) {
+        goto retry;
+    }
 
     context->status = read_buf[8]; // debug
 
@@ -529,12 +614,14 @@ try_again:
 
     PT_EXIT(pt);
 
-cancel_disconnect:
+disconnect:
     PT_WAIT_WHILE(pt, write_xfer_size);
     GAP_TerminateLinkReq(remote_handle, 0x13);
     PT_WAIT_UNTIL(pt, hci_command_status);
 
-    goto end_cancel;
+    // task->status must be set before goto disconnect!
+
+    PT_EXIT(pt);
 
 cancel_connect:
     PT_WAIT_WHILE(pt, write_xfer_size);
@@ -563,20 +650,66 @@ static PT_THREAD(write_remote_task(struct pt *pt, pbio_task_t *task)) {
 
     PT_BEGIN(pt);
 
+retry:
     PT_WAIT_WHILE(pt, write_xfer_size);
     {
-        attWriteReq_t req = {
-            .handle = remote_lwp3_char_handle + 1,
-            .len = value->size,
-            .pValue = value->data,
+        GattWriteCharValue_t req = {
+            .connHandle = remote_handle,
+            .handle = remote_lwp3_char_handle,
+            .value = value->data,
+            .dataSize = value->size,
         };
-        GATT_WriteNoRsp(remote_handle, &req);
+        GATT_WriteCharValue(&req);
     }
+
     PT_WAIT_UNTIL(pt, hci_command_status);
 
-    // TODO: set error if write failed
+    HCI_StatusCodes_t status = read_buf[8];
 
-    task->status = PBIO_SUCCESS;
+    if (status != bleSUCCESS) {
+        if (task->cancel) {
+            goto cancel;
+        }
+
+        if (status == blePending) {
+            goto retry;
+        }
+
+        goto exit;
+    }
+
+    // This gets a bit tricky. Once the request has been sent, we can't cancel
+    // the task, so we have to wait for the response (otherwise the response
+    // could be confused with the next request). The device could also become
+    // disconnected, in which case we never receive a response.
+
+    PT_WAIT_UNTIL(pt, {
+        if (remote_handle == NO_CONNECTION) {
+            task->status = PBIO_ERROR_NO_DEV;
+            PT_EXIT(pt);
+        }
+
+        uint8_t *payload;
+        uint16_t event;
+        (payload = get_vendor_event(remote_handle, &event, &status)) && ({
+            if (event == ATT_EVENT_ERROR_RSP && payload[0] == ATT_WRITE_REQ
+                && pbio_get_uint16_le(&payload[1]) == remote_lwp3_char_handle) {
+
+                task->status = PBIO_ERROR_FAILED;
+                PT_EXIT(pt);
+            }
+
+            event == ATT_EVENT_WRITE_RSP;
+        });
+    });
+
+exit:
+    task->status = ble_error_to_pbio_error(status);
+
+    PT_EXIT(pt);
+
+cancel:
+    task->status = PBIO_ERROR_CANCELED;
 
     PT_END(pt);
 }
@@ -657,11 +790,11 @@ static void handle_event(uint8_t *packet) {
     (void)size;
 
     switch (event) {
-        case HCI_COMMAND_COMPLETE_EVENT:
+        case HCI_EVENT_COMMAND_COMPLETE:
             hci_command_complete = true;
             break;
 
-        case HCI_LE_EXT_EVENT: {
+        case HCI_EVENT_VENDOR_SPECIFIC: {
             uint16_t event_code = (data[1] << 8) | data[0];
             HCI_StatusCodes_t status = data[2];
             uint16_t connection_handle = (data[4] << 8) | data[3];
@@ -751,14 +884,6 @@ static void handle_event(uint8_t *packet) {
                             DBG("unhandled read by type req: %04X", type);
                             break;
                     }
-                }
-                break;
-
-                case ATT_EVENT_READ_BY_TYPE_RSP: {
-                    // Assuming that LEGO Powered Up remote is the only thing
-                    // that provides this event type
-                    remote_lwp3_char_handle = (data[8] << 8) | data[7];
-                    // REVISIT: could also be bleTimeout
                 }
                 break;
 
@@ -1557,10 +1682,12 @@ start:
             if (read_buf[NPI_SPI_HEADER_LEN] == HCI_EVENT_PACKET) {
                 handle_event(&read_buf[NPI_SPI_HEADER_LEN + 1]);
             }
-            // TODO: do we need to handle ACL packets (HCI_ACLDATA_PKT)?
         }
 
         pbio_task_queue_run_once(task_queue);
+
+        // clear the event packet type in case tasks are run outside of this loop
+        read_buf[NPI_SPI_HEADER_LEN] = 0;
     }
 
     PROCESS_END();

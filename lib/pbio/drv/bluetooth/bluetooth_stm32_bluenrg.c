@@ -470,7 +470,7 @@ try_again:
     PT_WAIT_UNTIL(pt, hci_command_status);
     context->status = aci_gatt_disc_charac_by_uuid_end();
 
-    // HACK: Chararacteristics of LEGO Mario are not properly found by aci_gatt_disc_charac_by_uuid_begin().
+    // HACK: Characteristics of LEGO Mario are not properly found by aci_gatt_disc_charac_by_uuid_begin().
     // remote_lwp3_char_handle for mario is hard coded for now
     if (context->hub_kind == LWP3_HUB_KIND_MARIO) {
         remote_lwp3_char_handle = 0x0011;
@@ -871,7 +871,6 @@ retry:
     if (pckt->type == HCI_EVENT_PKT) {
         handle_event((hci_event_pckt *)pckt->data);
     }
-    // TODO: do we need to handle ACL packets (HCI_ACLDATA_PKT)?
 
 end:;
     PT_END(pt);

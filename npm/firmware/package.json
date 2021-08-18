@@ -1,6 +1,6 @@
 {
     "name": "@pybricks/firmware",
-    "version": "4.13.0-alpha.3+firmware.v3.1.0a3",
+    "version": "4.13.0-alpha.4+firmware.v3.1.0a3",
     "description": "Pybricks firmware",
     "main": "./build/index.js",
     "types": "./build/index.d.ts",
@@ -19,6 +19,7 @@
     "author": "The Pybricks Authors",
     "license": "MIT",
     "scripts": {
+        "prebuild": "node -p \"'export const PACKAGE_VERSION = ' + JSON.stringify(require('./package.json').version) + ';'\" > version.ts",
         "build": "./download-firmware.py && tsc",
         "test": "tsc && jest"
     },
