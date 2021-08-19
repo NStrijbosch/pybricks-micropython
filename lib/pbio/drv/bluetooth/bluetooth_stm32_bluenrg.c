@@ -118,6 +118,45 @@ static const pbdrv_gpio_t miso_gpio = { .bank = GPIOC, .pin = 2 };
 static const pbdrv_gpio_t sck_gpio = { .bank = GPIOB, .pin = 13 };
 
 /**
+ * Converts a BlueNRG-MS error code to a PBIO error code.
+ * @param [in]  status  The BlueNRG-MS error code.
+ * @return              The PBIO error code.
+ */
+static pbio_error_t ble_error_to_pbio_error(tBleStatus status) {
+    if (status == BLE_STATUS_SUCCESS) {
+        return PBIO_SUCCESS;
+    }
+    if (status == BLE_STATUS_TIMEOUT) {
+        return PBIO_ERROR_TIMEDOUT;
+    }
+    return PBIO_ERROR_FAILED;
+}
+
+/**
+ * Gets a vendor-specific event for a specific connection.
+ * @param [out] event       The vendor-specific event.
+ * @return                  The event payload or NULL if there is no pending
+ *                          vendor-specific event.
+ */
+static void *get_vendor_event(uint16_t *event) {
+    hci_uart_pckt *packet = (void *)read_buf;
+
+    if (packet->type != HCI_EVENT_PKT) {
+        return NULL;
+    }
+
+    hci_event_pckt *event_packet = (void *)packet->data;
+
+    if (event_packet->evt != EVT_VENDOR) {
+        return NULL;
+    }
+
+    *event = pbio_get_uint16_le(event_packet->data);
+
+    return &event_packet->data[2];
+}
+
+/**
  * Sets the nRESET line on the Bluetooth chip.
  */
 static void bluetooth_reset(bool reset) {
@@ -470,29 +509,67 @@ try_again:
     PT_WAIT_UNTIL(pt, hci_command_status);
     context->status = aci_gatt_disc_charac_by_uuid_end();
 
+    PT_WAIT_UNTIL(pt, {
+        void *payload;
+        uint16_t event;
+        (payload = get_vendor_event(&event))
+        && ({
+            if (event == EVT_BLUE_GATT_DISC_READ_CHAR_BY_UUID_RESP) {
+                evt_gatt_disc_read_char_by_uuid_resp *subevt = payload;
+
+                if (subevt->conn_handle == remote_handle) {
+                    remote_lwp3_char_handle = subevt->attr_handle;
+                }
+
+            }
+
+            event == EVT_BLUE_GATT_PROCEDURE_COMPLETE;
+        }) && ({
+            evt_gatt_procedure_complete *subevt = payload;
+            subevt->conn_handle == remote_handle;
+        });
+    });
+
     // HACK: Characteristics of LEGO Mario are not properly found by aci_gatt_disc_charac_by_uuid_begin().
     // remote_lwp3_char_handle for mario is hard coded for now
     if (context->hub_kind == LWP3_HUB_KIND_MARIO) {
         remote_lwp3_char_handle = 0x0011;
-    } else {
-        PT_WAIT_UNTIL(pt, {
-            if (task->cancel) {
-                goto cancel_disconnect;
-            }
-            remote_lwp3_char_handle;
-        });
     }
 
     // enable notifications
 
     static const uint16_t enable = 0x0001;
 
+retry:
     PT_WAIT_WHILE(pt, write_xfer_size);
-    aci_gatt_write_without_response_begin(remote_handle, remote_lwp3_char_handle + 2, sizeof(enable), (const uint8_t *)&enable);
-    PT_WAIT_UNTIL(pt, hci_command_complete);
-    context->status = aci_gatt_write_without_response_end();
+    aci_gatt_write_charac_value_begin(remote_handle, remote_lwp3_char_handle + 2, sizeof(enable), (const uint8_t *)&enable);
+    PT_WAIT_UNTIL(pt, hci_command_status);
+    context->status = aci_gatt_write_charac_value_end();
 
-    task->status = PBIO_SUCCESS;
+    if (context->status != BLE_STATUS_SUCCESS) {
+        if (task->cancel) {
+            goto cancel_disconnect;
+        }
+
+        if (context->status == BLE_STATUS_NOT_ALLOWED) {
+            goto retry;
+        }
+
+        task->status = ble_error_to_pbio_error(context->status);
+
+        PT_EXIT(pt);
+    }
+
+    evt_gatt_procedure_complete *payload;
+    PT_WAIT_UNTIL(pt, {
+        uint16_t event;
+        (payload = get_vendor_event(&event))
+        && event == EVT_BLUE_GATT_PROCEDURE_COMPLETE
+        && payload->conn_handle == remote_handle;
+    });
+
+    context->status = payload->error_code;
+    task->status = ble_error_to_pbio_error(context->status);
 
     PT_EXIT(pt);
 
@@ -533,14 +610,40 @@ static PT_THREAD(write_remote_task(struct pt *pt, pbio_task_t *task)) {
 
     PT_BEGIN(pt);
 
+retry:
     PT_WAIT_WHILE(pt, write_xfer_size);
-    aci_gatt_write_without_response_begin(remote_handle, remote_lwp3_char_handle + 1, value->size, value->data);
-    PT_WAIT_UNTIL(pt, hci_command_complete);
-    aci_gatt_write_without_response_end();
+    aci_gatt_write_charac_value_begin(remote_handle, remote_lwp3_char_handle + 1, value->size, value->data);
+    PT_WAIT_UNTIL(pt, hci_command_status);
+    tBleStatus status = aci_gatt_write_charac_value_end();
 
-    // TODO: set error if write failed
+    if (status != BLE_STATUS_SUCCESS) {
+        if (task->cancel) {
+            task->status = PBIO_ERROR_CANCELED;
+            PT_EXIT(pt);
+        }
 
-    task->status = PBIO_SUCCESS;
+        if (status == BLE_STATUS_NOT_ALLOWED) {
+            goto retry;
+        }
+
+        task->status = ble_error_to_pbio_error(status);
+        PT_EXIT(pt);
+    }
+
+    evt_gatt_procedure_complete *payload;
+    PT_WAIT_UNTIL(pt, {
+        if (remote_handle == 0) {
+            task->status = PBIO_ERROR_NO_DEV;
+            PT_EXIT(pt);
+        }
+
+        uint16_t event;
+        (payload = get_vendor_event(&event))
+        && event == EVT_BLUE_GATT_PROCEDURE_COMPLETE
+        && payload->conn_handle == remote_handle;
+    });
+
+    task->status = ble_error_to_pbio_error(payload->error_code);
 
     PT_END(pt);
 }
@@ -816,14 +919,6 @@ static void handle_event(hci_event_pckt *event) {
                     }
                 }
                 break;
-
-                case EVT_BLUE_GATT_DISC_READ_CHAR_BY_UUID_RESP: {
-                    evt_gatt_disc_read_char_by_uuid_resp *subevt = (void *)evt->data;
-                    // REVISIT: for now, assuming the Powered Up remote is the
-                    // only thing that generates this event
-                    remote_lwp3_char_handle = subevt->attr_handle;
-                }
-                break;
             }
         }
         break;
@@ -926,8 +1021,17 @@ void hci_send_req(struct hci_request *r) {
 
 // implements function for BlueNRG library
 void hci_recv_resp(struct hci_response *r) {
-    // TODO: might be a good idea to make sure opcodes match
-    memcpy(r->rparam, &read_buf[HCI_HDR_SIZE + HCI_EVENT_HDR_SIZE + EVT_CMD_COMPLETE_SIZE], r->rlen);
+    int offset = HCI_HDR_SIZE + HCI_EVENT_HDR_SIZE;
+
+    assert(read_buf[0] == HCI_EVENT_PKT);
+
+    // *_end() functions for command complete skip the evt_cmd_complete struct
+    // when unpacking the event data
+    if (read_buf[1] == EVT_CMD_COMPLETE) {
+        offset += EVT_CMD_COMPLETE_SIZE;
+    }
+
+    memcpy(r->rparam, &read_buf[offset], r->rlen);
 }
 
 // Initializes the Bluetooth chip

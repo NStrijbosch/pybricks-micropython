@@ -77,107 +77,10 @@ STATIC void handle_notification(pbdrv_bluetooth_connection_t connection, const u
     }
 }
 
-STATIC void remote_connect(const char *name, mp_int_t timeout) {
-    pb_remote_t *remote = &pb_remote_singleton;
-
-    // REVISIT: for now, we only allow a single connection to a LWP3 device.
-    if (pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_LWP3)) {
-        pb_assert(PBIO_ERROR_BUSY);
-    }
-
-    // needed to ensure that no buttons are "pressed" after reconnecting since
-    // we are using static memory
-    memset(remote, 0, sizeof(*remote));
-
-    remote->context.hub_kind = LWP3_HUB_KIND_HANDSET;
-
-    if (name) {
-        strncpy(remote->context.name, name, sizeof(remote->context.name));
-    }
-
-    pbdrv_bluetooth_set_notification_handler(handle_notification);
-    pbdrv_bluetooth_scan_and_connect(&remote->task, &remote->context);
-    pb_wait_task(&remote->task, timeout);
-
-    struct {
-        pbdrv_bluetooth_value_t value;
-        uint8_t length;
-        uint8_t hub;
-        uint8_t type;
-        uint8_t port;
-        uint8_t mode;
-        uint32_t delta_interval;
-        uint8_t enable_notifications;
-    } __attribute__((packed)) msg = {
-        .value.size = 10,
-        .length = 10,
-        .hub = 0,
-        .type = LWP3_MSG_TYPE_PORT_MODE_SETUP,
-        .port = REMOTE_PORT_LEFT_BUTTONS,
-        .mode = REMOTE_BUTTONS_MODE_KEYSD,
-        .delta_interval = 1,
-        .enable_notifications = 1,
-    };
-
-    // set mode for left buttons
-
-    pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
-    pb_wait_task(&remote->task, -1);
-
-    // set mode for right buttons
-
-    msg.port = REMOTE_PORT_RIGHT_BUTTONS;
-    pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
-    pb_wait_task(&remote->task, -1);
-
-    // set status light to RGB mode
-
-    msg.port = REMOTE_PORT_STATUS_LIGHT;
-    msg.mode = STATUS_LIGHT_MODE_RGB_0;
-    msg.enable_notifications = 0;
-    pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
-    pb_wait_task(&remote->task, -1);
-}
-
-void pb_type_Remote_cleanup(void) {
-    pbdrv_bluetooth_disconnect_remote();
-}
-
 STATIC void remote_assert_connected(void) {
     if (!pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_LWP3)) {
         mp_raise_OSError(MP_ENODEV);
     }
-}
-
-STATIC pbio_error_t remote_button_is_pressed(pbio_button_flags_t *pressed) {
-    pb_remote_t *remote = &pb_remote_singleton;
-
-    remote_assert_connected();
-
-    *pressed = 0;
-
-    if (remote->left[0]) {
-        *pressed |= PBIO_BUTTON_LEFT_UP;
-    }
-    if (remote->left[1]) {
-        *pressed |= PBIO_BUTTON_LEFT;
-    }
-    if (remote->left[2]) {
-        *pressed |= PBIO_BUTTON_LEFT_DOWN;
-    }
-    if (remote->right[0]) {
-        *pressed |= PBIO_BUTTON_RIGHT_UP;
-    }
-    if (remote->right[1]) {
-        *pressed |= PBIO_BUTTON_RIGHT;
-    }
-    if (remote->right[2]) {
-        *pressed |= PBIO_BUTTON_RIGHT_DOWN;
-    }
-    if (remote->center) {
-        *pressed |= PBIO_BUTTON_CENTER;
-    }
-    return PBIO_SUCCESS;
 }
 
 STATIC void pb_type_pupdevices_Remote_light_on(void *context, const pbio_color_hsv_t *hsv) {
@@ -211,6 +114,118 @@ STATIC void pb_type_pupdevices_Remote_light_on(void *context, const pbio_color_h
 
     pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
     pb_wait_task(&remote->task, -1);
+}
+
+STATIC void remote_connect(const char *name, mp_int_t timeout) {
+    pb_remote_t *remote = &pb_remote_singleton;
+
+    // REVISIT: for now, we only allow a single connection to a LWP3 device.
+    if (pbdrv_bluetooth_is_connected(PBDRV_BLUETOOTH_CONNECTION_PERIPHERAL_LWP3)) {
+        pb_assert(PBIO_ERROR_BUSY);
+    }
+
+    // needed to ensure that no buttons are "pressed" after reconnecting since
+    // we are using static memory
+    memset(remote, 0, sizeof(*remote));
+
+    remote->context.hub_kind = LWP3_HUB_KIND_HANDSET;
+
+    if (name) {
+        strncpy(remote->context.name, name, sizeof(remote->context.name));
+    }
+
+    pbdrv_bluetooth_set_notification_handler(handle_notification);
+    pbdrv_bluetooth_scan_and_connect(&remote->task, &remote->context);
+    pb_wait_task(&remote->task, timeout);
+
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        struct {
+            pbdrv_bluetooth_value_t value;
+            uint8_t length;
+            uint8_t hub;
+            uint8_t type;
+            uint8_t port;
+            uint8_t mode;
+            uint32_t delta_interval;
+            uint8_t enable_notifications;
+        } __attribute__((packed)) msg = {
+            .value.size = 10,
+            .length = 10,
+            .hub = 0,
+            .type = LWP3_MSG_TYPE_PORT_MODE_SETUP,
+            .port = REMOTE_PORT_LEFT_BUTTONS,
+            .mode = REMOTE_BUTTONS_MODE_KEYSD,
+            .delta_interval = 1,
+            .enable_notifications = 1,
+        };
+
+        // set mode for left buttons
+
+        pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
+        pb_wait_task(&remote->task, -1);
+
+        // set mode for right buttons
+
+        msg.port = REMOTE_PORT_RIGHT_BUTTONS;
+        pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
+        pb_wait_task(&remote->task, -1);
+
+        // set status light to RGB mode
+
+        msg.port = REMOTE_PORT_STATUS_LIGHT;
+        msg.mode = STATUS_LIGHT_MODE_RGB_0;
+        msg.enable_notifications = 0;
+        pbdrv_bluetooth_write_remote(&remote->task, &msg.value);
+        pb_wait_task(&remote->task, -1);
+
+        // REVISIT: Could possibly use system color here to make remote match
+        // hub status light. For now, the system color is hard-coded to blue.
+        pbio_color_hsv_t hsv;
+        pbio_color_to_hsv(PBIO_COLOR_BLUE, &hsv);
+        pb_type_pupdevices_Remote_light_on(NULL, &hsv);
+
+        nlr_pop();
+    } else {
+        // disconnect if any setup task failed
+        pbdrv_bluetooth_disconnect_remote();
+        nlr_jump(nlr.ret_val);
+    }
+}
+
+void pb_type_Remote_cleanup(void) {
+    pbdrv_bluetooth_disconnect_remote();
+}
+
+STATIC pbio_error_t remote_button_is_pressed(pbio_button_flags_t *pressed) {
+    pb_remote_t *remote = &pb_remote_singleton;
+
+    remote_assert_connected();
+
+    *pressed = 0;
+
+    if (remote->left[0]) {
+        *pressed |= PBIO_BUTTON_LEFT_UP;
+    }
+    if (remote->left[1]) {
+        *pressed |= PBIO_BUTTON_LEFT;
+    }
+    if (remote->left[2]) {
+        *pressed |= PBIO_BUTTON_LEFT_DOWN;
+    }
+    if (remote->right[0]) {
+        *pressed |= PBIO_BUTTON_RIGHT_UP;
+    }
+    if (remote->right[1]) {
+        *pressed |= PBIO_BUTTON_RIGHT;
+    }
+    if (remote->right[2]) {
+        *pressed |= PBIO_BUTTON_RIGHT_DOWN;
+    }
+    if (remote->center) {
+        *pressed |= PBIO_BUTTON_CENTER;
+    }
+    return PBIO_SUCCESS;
 }
 
 typedef struct _pb_type_pupdevices_Remote_obj_t {
