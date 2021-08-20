@@ -29,6 +29,7 @@
 
 typedef struct {
     pbio_task_t task;
+    uint8_t buffer[20];
     pbdrv_bluetooth_scan_and_connect_context_t context;
 } pb_lwp3device_t;
 
@@ -36,7 +37,12 @@ STATIC pb_lwp3device_t pb_lwp3device_singleton;
 
 // Handles LEGO Wireless protocol messages from the LWP3 Device
 STATIC void handle_notification(pbdrv_bluetooth_connection_t connection, const uint8_t *value, uint8_t size) {
-    // TODO: include notification handler: store all incoming messages in finite lenght buffer
+    pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
+
+    if (value[2] == LWP3_MSG_TYPE_PORT_VALUE) {
+        memset(lwp3device->buffer, 0, 20);
+        memcpy(lwp3device->buffer, &value[0], size);
+    }
 }
 
 STATIC void lwp3device_connect(const lwp3_hub_kind_t hub_kind, const char *name, mp_int_t timeout) {
@@ -140,7 +146,7 @@ STATIC mp_obj_t lwp3device_name(size_t n_args, const mp_obj_t *args) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lwp3device_name_obj, 1, 2, lwp3device_name);
 
-STATIC mp_obj_t lwp3device_write(size_t n_args, const mp_obj_t *args)  {
+STATIC mp_obj_t lwp3device_write(size_t n_args, const mp_obj_t *args) {
     pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
 
     lwp3device_assert_connected();
@@ -163,17 +169,25 @@ STATIC mp_obj_t lwp3device_write(size_t n_args, const mp_obj_t *args)  {
 
         pbdrv_bluetooth_write_remote(&lwp3device->task, &msg.value);
         pb_wait_task(&lwp3device->task, -1);
-
-        return mp_const_none;
-    } else{
-        return mp_const_none;
     }
+        
+    return mp_const_none
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lwp3device_write_obj, 1, 2, lwp3device_write);
+
+STATIC mp_obj_t lwp3device_read(size_t n_args, const mp_obj_t *args) {
+    pb_lwp3device_t *lwp3device = &pb_lwp3device_singleton;
+
+    lwp3device_assert_connected();
+
+    return mp_obj_new_bytearray(20, lwp3device->buffer);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(lwp3device_read_obj, 1, 2, lwp3device_read);
 
 STATIC const mp_rom_map_elem_t pb_type_experimental_LWP3Device_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_name), MP_ROM_PTR(&lwp3device_name_obj) },
     { MP_ROM_QSTR(MP_QSTR_write), MP_ROM_PTR(&lwp3device_write_obj) },
+    { MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&lwp3device_read_obj) },
 };
 STATIC MP_DEFINE_CONST_DICT(pb_type_experimental_LWP3Device_locals_dict, pb_type_experimental_LWP3Device_locals_dict_table);
 
