@@ -3,6 +3,8 @@
 
 #include <string.h>
 
+#include <contiki.h>
+
 #include <pbdrv/clock.h>
 
 #include <pbio/broadcast.h>
@@ -14,16 +16,22 @@
 #include <pbdrv/bluetooth.h>
 
 static struct {
+    // Message data
     pbdrv_bluetooth_value_t value;
     uint8_t header[3];
     uint8_t index;
     uint32_t hash;
     char payload[PBIO_BROADCAST_MAX_PAYLOAD_SIZE];
+    // Transmission info
     uint32_t timestamp;
+    bool advertising_now;
+    bool advertising_needs_update;
 } __attribute__((packed)) transmit_signal = {
     // Header for compatibility with official LEGO MINDSTORMS App:
     // 0xFF for manufacturer data and 0x0397 for company ID.
     .header = {255, 3, 151},
+    .advertising_now = false,
+    .advertising_needs_update = false,
 };
 
 #define PBIO_BROADCAST_META_SIZE (8)
@@ -129,8 +137,8 @@ void pbio_broadcast_transmit(uint32_t hash, const uint8_t *payload, uint8_t size
     // Also make transmitted signal readable by itself.
     pbio_broadcast_parse_advertising_data(transmit_signal.value.data, transmit_signal.value.size);
 
-    // Start broadcasting it.
-    pbdrv_bluetooth_start_data_advertising(&transmit_signal.value);
+    // Prepare to start broadcasting it.
+    transmit_signal.advertising_needs_update = true;
 }
 
 void pbio_broadcast_parse_advertising_data(const uint8_t *data, uint8_t size) {
@@ -170,6 +178,46 @@ void pbio_broadcast_parse_advertising_data(const uint8_t *data, uint8_t size) {
         memcpy(signal->payload, &data[PBIO_BROADCAST_META_SIZE], signal->size);
         return;
     }
+}
+
+PROCESS(pbio_broadcast_process, "broadcast");
+
+PROCESS_THREAD(pbio_broadcast_process, ev, data) {
+    static struct etimer timer;
+
+    PROCESS_BEGIN();
+
+    etimer_set(&timer, 1000);
+
+    for (;;) {
+        PROCESS_WAIT_EVENT_UNTIL(transmit_signal.advertising_needs_update || (ev == PROCESS_EVENT_TIMER && etimer_expired(&timer)));
+
+        // Check which condition triggered the update.
+        if (transmit_signal.advertising_needs_update) {
+            // Reset update flag.
+            transmit_signal.advertising_needs_update = false;
+
+            // TODO: Set advertising data
+
+            // Start advertising if we are not already.
+            if (!transmit_signal.advertising_now) {
+                // TODO: Start advertising.
+                transmit_signal.advertising_now = true;
+            }
+
+            // Reset timer
+            etimer_restart(&timer);
+        } else {
+            // Otherwise, the timer has expired, so stop transmitting.
+
+            // TODO: STOP TRANSMITTING
+
+            transmit_signal.advertising_now = false;
+        }
+
+    }
+
+    PROCESS_END();
 }
 
 #endif // PBIO_CONFIG_BROADCAST_NUM_SIGNALS

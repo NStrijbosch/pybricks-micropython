@@ -35,4 +35,8 @@ PROCESS_NAME(pbsys_process);
 PROCESS_NAME(pbio_motor_process);
 #endif
 
+#if PBIO_CONFIG_BROADCAST_NUM_SIGNALS != 0
+PROCESS_NAME(pbio_broadcast_process);
+#endif
+
 #endif // _PBIO_PROCESSES_H_
