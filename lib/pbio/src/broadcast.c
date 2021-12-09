@@ -38,6 +38,8 @@ static struct {
 #define PBIO_BROADCAST_MAX_PAYLOAD_SIZE (23)
 #define PBIO_BROADCAST_DELAY_REPEAT_MS (100)
 
+PROCESS(pbio_broadcast_process, "broadcast");
+
 // Received signals.
 typedef struct _pbio_broadcast_received_t {
     uint32_t timestamp;
@@ -139,6 +141,7 @@ void pbio_broadcast_transmit(uint32_t hash, const uint8_t *payload, uint8_t size
 
     // Prepare to start broadcasting it.
     transmit_signal.advertising_needs_update = true;
+    process_poll(&pbio_broadcast_process);
 }
 
 void pbio_broadcast_parse_advertising_data(const uint8_t *data, uint8_t size) {
@@ -180,8 +183,6 @@ void pbio_broadcast_parse_advertising_data(const uint8_t *data, uint8_t size) {
     }
 }
 
-PROCESS(pbio_broadcast_process, "broadcast");
-
 PROCESS_THREAD(pbio_broadcast_process, ev, data) {
     static struct etimer timer;
 
@@ -190,18 +191,18 @@ PROCESS_THREAD(pbio_broadcast_process, ev, data) {
     etimer_set(&timer, 1000);
 
     for (;;) {
-        PROCESS_WAIT_EVENT_UNTIL(transmit_signal.advertising_needs_update || (ev == PROCESS_EVENT_TIMER && etimer_expired(&timer)));
+        PROCESS_WAIT_EVENT_UNTIL((ev == PROCESS_EVENT_POLL && transmit_signal.advertising_needs_update) || (ev == PROCESS_EVENT_TIMER && etimer_expired(&timer)));
 
         // Check which condition triggered the update.
         if (transmit_signal.advertising_needs_update) {
             // Reset update flag.
             transmit_signal.advertising_needs_update = false;
 
-            // TODO: Set advertising data
+            pbdrv_bluetooth_set_advertising_data(&transmit_signal.value);
 
             // Start advertising if we are not already.
             if (!transmit_signal.advertising_now) {
-                // TODO: Start advertising.
+                pbdrv_bluetooth_start_data_advertising();
                 transmit_signal.advertising_now = true;
             }
 
@@ -209,8 +210,7 @@ PROCESS_THREAD(pbio_broadcast_process, ev, data) {
             etimer_restart(&timer);
         } else {
             // Otherwise, the timer has expired, so stop transmitting.
-
-            // TODO: STOP TRANSMITTING
+            pbdrv_bluetooth_stop_advertising();
 
             transmit_signal.advertising_now = false;
         }
